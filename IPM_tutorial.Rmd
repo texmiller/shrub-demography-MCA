@@ -1,0 +1,30 @@
+---
+title: "IPM tutorial"
+author: "Tom Miller"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+## A bit about Markdown and tidyverse
+This is an RMarkdown document, which just means that it intersperses plain text with "chunks" of R code. Here, for example, is the first chunk, which sets some global options and loads R packages we will need. You can interact with RMarkdown documents either by compiling the whole thing to pdf (click the "knit" button in RStudio) or by running the code chunk by chunk (hit the green triangle in the top corner of each chunk to run the chunk).
+
+I use the tidyverse package for data manipulation. I am not sure if you have experience with this but tidyverse is pretty great. You will see me use "pipes" (the %>% symbol) and if you want to know what this is doing let's talk more or check out https://r4ds.had.co.nz/. 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = F)
+knitr::opts_chunk$set(message = F)
+
+library(tidyverse)
+```
+
+## Getting started
+The starting point for data-driven models such as IPM is, of course, data. I will use my cactus data, which I have been collecting from the Sevilleta LTER since 2003. The data frame is set up such that each row is an individual plant tracked over a single transition year, from $t$ to $t+1$. You should have a data set in this general format in order to effectively use this script as a workable template. (In your case the transition period may more than one year but the same principles apply.) I have pared down these data to the bare essentials. Here are the variables:
+
+```{r cactus_dat, echo=F}
+cactus <- read_csv("cholla_demography_20042019_cleaned.csv") %>% 
+  select(Plot,TagID,Year_t,Height_t,Width_t,Perp_t,TotFlowerbuds_t,
+         Recruit,Newplant,Survival_t1,Height_t1,Width_t1,Perp_t1,TotFlowerbuds_t)
+str(cactus)
+```
+
+
