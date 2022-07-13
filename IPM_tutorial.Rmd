@@ -10,7 +10,7 @@ This is an RMarkdown document, which just means that it intersperses plain text 
 
 I use the tidyverse package for data manipulation. I am not sure if you have experience with this but tidyverse is pretty great. You will see me use "pipes" (the %>% symbol) and if you want to know what this is doing let's talk more or check out https://r4ds.had.co.nz/. 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(echo = F)
 knitr::opts_chunk$set(warning = F)
 knitr::opts_chunk$set(message = F)
 library(lme4)
@@ -19,7 +19,7 @@ library(tidyverse)
 
 ## Getting started
 The starting point for data-driven models such as IPM is, of course, data. I will use my cactus data, which I have been collecting from the Sevilleta LTER since 2003. The data frame is set up such that each row is an individual plant tracked over a single transition year, from $t$ to $t+1$. You should have a data set in this general format in order to effectively use this script as a workable template. (In your case the transition period may more than one year but the same principles apply.) I have pared down these data to the bare essentials. 
-```{r cactus_dat, echo=F}
+```{r cactus_dat, echo=T}
 cactus <- read_csv("cholla_demography_20042019_cleaned.csv") %>% 
   select(Plot,TagID,Year_t,Height_t,Width_t,Perp_t,TotFlowerbuds_t,
          Newplant,Survival_t1,Height_t1,Width_t1,Perp_t1,TotFlowerbuds_t1)
@@ -49,7 +49,7 @@ legend("topleft",bty="n",lty=1,legend=c("y=x"))
 ```
 
 Here is the model statement, a simple linear regression for future size as a function of current size, and a plot of the fit.
-```{r lm size, echo=T}
+```{r lm size}
 growth_model <- lm(log(vol_t1) ~ log(vol_t), data = cactus)
 
 plot(log(cactus$vol_t1) ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Volume in year t+1")
@@ -71,7 +71,7 @@ abline(v=median(log(cactus$vol_t),na.rm=T))
 ```
 
 Getting the mean and variance of growth correct is really important because this will govern size transitions within the IPM kernel. So we should always be skeptical of our fitted models. Here I will have a look at whether the residuals are normally distributed.
-```{r check lm fit, echo=T}
+```{r check lm fit}
 ##are the residuals normally distributed
 hist(residuals(growth_model))
 shapiro.test(residuals(growth_model)[1:5000])
@@ -109,7 +109,7 @@ points(surv_bin$mean_size, surv_bin$mean_surv, pch=16, cex=2)
 
 ```
 Now here is the model and output. 
-```{r survival model, echo=T}
+```{r survival model}
 survival_model <- glm(Survival_t1 ~ log(vol_t), family = "binomial", data=cactus)
 summary(survival_model)
 ```
