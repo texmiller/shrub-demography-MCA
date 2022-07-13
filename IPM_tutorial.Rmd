@@ -13,18 +13,191 @@ I use the tidyverse package for data manipulation. I am not sure if you have exp
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(warning = F)
 knitr::opts_chunk$set(message = F)
-
+library(lme4)
 library(tidyverse)
 ```
 
 ## Getting started
-The starting point for data-driven models such as IPM is, of course, data. I will use my cactus data, which I have been collecting from the Sevilleta LTER since 2003. The data frame is set up such that each row is an individual plant tracked over a single transition year, from $t$ to $t+1$. You should have a data set in this general format in order to effectively use this script as a workable template. (In your case the transition period may more than one year but the same principles apply.) I have pared down these data to the bare essentials. Here are the variables:
-
+The starting point for data-driven models such as IPM is, of course, data. I will use my cactus data, which I have been collecting from the Sevilleta LTER since 2003. The data frame is set up such that each row is an individual plant tracked over a single transition year, from $t$ to $t+1$. You should have a data set in this general format in order to effectively use this script as a workable template. (In your case the transition period may more than one year but the same principles apply.) I have pared down these data to the bare essentials. 
 ```{r cactus_dat, echo=F}
 cactus <- read_csv("cholla_demography_20042019_cleaned.csv") %>% 
   select(Plot,TagID,Year_t,Height_t,Width_t,Perp_t,TotFlowerbuds_t,
-         Recruit,Newplant,Survival_t1,Height_t1,Width_t1,Perp_t1,TotFlowerbuds_t)
+         Newplant,Survival_t1,Height_t1,Width_t1,Perp_t1,TotFlowerbuds_t1)
+```
+Here are the variables:
+```{r str_cactus}
 str(cactus)
 ```
+Most of this should be pretty self explanatory. We have eight plots and each plant in each plot has a unique TagID. There are three size measurements: max height, max width, and width perpendicular to the maximum. We also count the total number of flowerbuds as a measure of reproduction. The start and end of the transition year are indicated with `t` and `t1`. We record survival at the end of the transition year. When we find new plants, these are indicated with `Newplant==1` and they first appear in year `t1`.
+
+We need one size variable for the IPM, but we have three. We can use the size measurements (in $cm$) to estimate plant size based on the volume of a cone. First we'll define a function to calculate volume ($cm^{3}$) based on the three measurements, then we will use the function to create two new variables, for volume at the start of the transition year and volume at the end of the transition year.
+```{r volume, echo=T}
+volume <- function(h, w, p){
+  (1/3)*pi*h*(((w + p)/2)/2)^2
+}
+cactus <- cactus %>% 
+  mutate(vol_t = volume(h = Height_t, w = Width_t, p = Perp_t),
+         vol_t1 = volume(h = Height_t1, w = Width_t1, p = Perp_t1))
+```
+
+### General linear model for growth
+Now we would like to fit our first model: a linear model for size at the end of the census interval (year) as a function of size at the start. This will also end up being our growth sub-model for the IPM kernel. For most organisms, including this one, the natural log of size is better-behaved, statistically, than raw size. So we will be working with log(volume). Here is what the one-year change in size looks like:
+```{r plot size}
+plot(log(cactus$vol_t1) ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Volume in year t+1")
+abline(0,1)
+legend("topleft",bty="n",lty=1,legend=c("y=x"))
+```
+
+Here is the model statement, a simple linear regression for future size as a function of current size, and a plot of the fit.
+```{r lm size, echo=T}
+growth_model <- lm(log(vol_t1) ~ log(vol_t), data = cactus)
+
+plot(log(cactus$vol_t1) ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Volume in year t+1")
+abline(coef(growth_model)[1],coef(growth_model)[2],col="red",lwd=3)
+abline(0,1)
+legend("topleft",bty="n",lty=1,col=c("black","red"),lwd=c(1,3),legend=c("y=x","fitted model"))
+```
+
+Remember that the plot above is just showing _mean_ expected size - that is only half of the story! The model also provides an estimate for the distribution of future size given current size. For example, for a plant of median size in time t, here it the distribution of it's expected size at time t+1:
+```{r median size hist}
+## dummy variable for size to make smooth plots
+x_dummy <- seq(min(log(cactus$vol_t),na.rm=T),max(log(cactus$vol_t),na.rm=T),0.1)
+plot(x_dummy,
+dnorm(x = x_dummy, 
+      mean = coef(growth_model)[1] + coef(growth_model)[2] * median(log(cactus$vol_t),na.rm=T),
+      sd = summary(growth_model)$sigma),
+type="l",lwd=3,xlab="log size t+1",ylab="Density")
+abline(v=median(log(cactus$vol_t),na.rm=T))
+```
+
+Getting the mean and variance of growth correct is really important because this will govern size transitions within the IPM kernel. So we should always be skeptical of our fitted models. Here I will have a look at whether the residuals are normally distributed.
+```{r check lm fit, echo=T}
+##are the residuals normally distributed
+hist(residuals(growth_model))
+shapiro.test(residuals(growth_model)[1:5000])
+```
+No, actually these residuals do not pass a normality test. We can also look at whether the variance is constant across all sizes, another assumption of our linear model.
+
+```{r}
+##is the residual variation related to size?
+growth_resid <- cactus %>% 
+  filter(!is.na(vol_t),!is.na(vol_t1)) %>% 
+  mutate(resid = growth_model$residuals) 
+plot(log(growth_resid$vol_t),growth_resid$resid)
+```
+
+There appears to be greater variance at smaller sizes, and you can also see this in the `size_t1` vs `size_t` plot above. So the bottom line here is that the growth model looks pretty good if we are just worried about running a line through points, but if we dig deeper the simple Gaussian model does not describe the real size transitions very well. From here, I would want to explore more complex growth functions that may do a better job, but whether that will be necessary for you depend entirely on your data. So for now I'll proceed to other vital rates, but we should have a close look at your growth data to decide the best approach.
 
 
+### Generalized linear model for survival
+Survival is certainly not Gaussian, since survival can only take one of two values: alive or dead. This is consistent with a binomial distribution (the coin-flipping distribution), so we will fit a generalized linear model assuming a binomial response distribution. This will tell us the probability of surviving to year $t+1$ as a function of size in year $t$.
+
+Let's have a look at the survival data with respect to size. The relevant response variable is `Survival_t1`:
+```{r plot surv raw}
+plot(cactus$Survival_t1 ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Survival in year t+1")
+```
+You'll notice that it is hard to make too much of the raw data, because they are just 0's and 1's. Binomial data such as these are often best visualized by taking binned means over the x-axis. This is  discretization, but just for visualization. The model we fit will treat size continuously.
+```{r surv bin}
+surv_bin <- cactus %>% 
+  mutate(size_bin = cut_interval(log(vol_t), n=8)) %>% 
+  group_by(size_bin) %>% 
+  summarise(mean_size = mean(log(vol_t),na.rm=T),
+            mean_surv = mean(Survival_t1,na.rm=T))
+
+plot(cactus$Survival_t1 ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Survival in year t+1", col="gray")        
+points(surv_bin$mean_size, surv_bin$mean_surv, pch=16, cex=2)
+
+```
+Now here is the model and output. 
+```{r survival model, echo=T}
+survival_model <- glm(Survival_t1 ~ log(vol_t), family = "binomial", data=cactus)
+summary(survival_model)
+```
+
+As always, it is important to gain confidence that the model fits the data adequately, because you will pass this model to your IPM for projecting population dynamics. There are several approaches to diagnostics of GLMs - this blog post from Ben Bolker is a useful starting point https://ms.mcmaster.ca/~bolker/R/misc/modelDiag.html. 
+
+One common problem with binomial or Poisson models is overdispersion, where the data are more variable than expected under the assumptions of the model. Here is one quick and dirty way to test for it. 
+```{r glm diagnostics, echo=T}
+resid.ssq <- sum(residuals(survival_model,type="pearson")^2)  
+resid.df <- nrow(subset(cactus,!is.na(vol_t) & !is.na(Survival_t1)))-length(coef(survival_model)) 
+resid.ssq/resid.df                                
+```
+As a rule of thumb, this ratio of ss:df should be close to 1 (if it's much over 1, that would indicate overdispersion). The result here suggests that we don't have an overdispersion problem, so I am going to keep moving forward with the analysis. Let's visualize the predictions of the model. You'll notice that I define and use a function called `invlogit`. This is the inverse link function which takes the predictions of the linear model (any real number between `-Inf` and `+Inf`) and transforms them to probabilities.
+
+```{r final survival plot}
+invlogit <- function(x){exp(x)/(1+exp(x))}
+
+plot(cactus$Survival_t1 ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Survival in year t+1", col="gray")        
+points(surv_bin$mean_size, surv_bin$mean_surv, pch=16, cex=2)
+lines(x_dummy,invlogit(coef(survival_model)[1]+coef(survival_model)[2]*x_dummy),col="red",lwd=3)
+
+```
+This looks great, but remember the red line is not fit to the black points (the binned means), it is fit to the gray dots.
+
+### Generalized linear model for flowering
+We will fit a model for the probability of flowering that is basically the same model as survival, with the exception that we'll fit flowering in year $t$ as a function of size in year $t$. Biologically, this makes the most sense for this system but it could be done differently. 
+
+```{r flowering}
+flowering_model <- glm(TotFlowerbuds_t>0 ~ log(vol_t), family = "binomial", data=cactus)
+summary(flowering_model)
+```
+
+We can visualize the fit just as we did for survival:
+```{r flowering plot}
+flow_bin <- cactus %>% 
+  mutate(size_bin = cut_interval(log(vol_t), n=8)) %>% 
+  group_by(size_bin) %>% 
+  summarise(mean_size = mean(log(vol_t),na.rm=T),
+            mean_flow = mean(TotFlowerbuds_t>0,na.rm=T))
+
+plot(cactus$TotFlowerbuds_t>0 ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Pr(Flowering)", col="gray")        
+points(flow_bin$mean_size, flow_bin$mean_flow, pch=16, cex=2)
+lines(x_dummy,invlogit(coef(flowering_model)[1]+coef(flowering_model)[2]*x_dummy),col="red",lwd=3)
+
+```
+
+### Generalized linear model for fertility
+The last vital rate model we will fit is the fertility (# flowerbuds) of flowering plants. Some people combine flowering and fertility into one step and use a zero-inflated model to recognize the difference between flowering and not flowering. I'm in the habit of splitting this into two analyses, but it could be done differently. 
+
+The number of flowerbuds is a count, so the Poisson distribution is a natural starting point. 
+
+
+```{r fertility}
+fert_model <- glm(TotFlowerbuds_t ~ log(vol_t), family = "poisson", data=subset(cactus,TotFlowerbuds_t>0))
+
+plot(cactus$TotFlowerbuds_t[cactus$TotFlowerbuds_t>0] ~ log(cactus$vol_t[cactus$TotFlowerbuds_t>0]), xlab = "Volume in year t", ylab = "Fertility of flowering plants in year t", col="gray") 
+lines(x_dummy,exp(coef(fert_model)[1]+coef(fert_model)[2]*x_dummy),col="red",lwd=3)
+
+resid.ssq <- sum(residuals(fert_model,type="pearson")^2)  
+resid.df <- nrow(subset(cactus,!is.na(vol_t) & !is.na(TotFlowerbuds_t)))-length(coef(fert_model)) 
+resid.ssq/resid.df 
+```
+The fit looks good visually, although the ratio of ssq to df suggests that the data are over-dispersed relative to expectations for a Poisson. The negative binomial distribution has a more flexible mean-variance relationship and that would be a next step to find a better-fitting distribution. But we don't use the variance of this function in the same way we use the variance of growth, so I am less worried about getting the variance exactly right as long as the mean is right. 
+
+### Other IPM elements
+There are lots of other pieces of information that we'll need for a complete IPM, and these details depends on the life cycle of the study species. In my case, I need to know how many seeds come from each flowerbud, the probability that a seed germinates to become a seedling, and the size distribution of seedlings. If there is any seed banking or dormancy, I would want to incorporate that too. We will need to think about those details of the life cycle. But for most IPM applications the vital rates that we fit above represent the bulk of the work. 
+
+## A note about mixed models
+The models I fit above are very simple general or generalized linear models. Many data sets have additional sources of variance or non-independence that need to be accounted for. For demographic data, the most common such sources are plots (or any type of spatial replication) and years (or any type of temporal replication). You'll notice that I have both plot and year information in my data, but I did not use it in the models I fit. If I wanted to use it I would need to fit _mixed_ models that include both fixed and random effects. As an example, I will do that here with the survival model. 
+
+Let's transition from a survival model with only the fixed effect of size to a model incorporating the heterogeneity in the data that can be explained by plot, a random effect. Here, we will be using the lme4 package.
+
+```{r surv glmm}
+surv_glmm <- glmer(Survival_t1~log(vol_t)+(log(vol_t)|Plot),family="binomial",data=cactus)
+summary(surv_glmm)
+```
+
+How different is this mixed model to the predictions of the fixed effect model that we started with? Pretty different. Which one should we trust? All else equal, mixed models are preferable. By assigning more sources of variation, often with `nuisance' variables like plot, random effects help improve resolution of the fixed effect(s) of interest. 
+```{r final survival plot glmm}
+plot(cactus$Survival_t1 ~ log(cactus$vol_t), xlab = "Volume in year t", ylab = "Survival in year t+1", col="gray")        
+points(surv_bin$mean_size, surv_bin$mean_surv, pch=16, cex=2)
+lines(x_dummy,invlogit(coef(survival_model)[1]+coef(survival_model)[2]*x_dummy),col="red",lwd=3)
+lines(x_dummy,invlogit(fixef(surv_glmm)[1]+fixef(surv_glmm)[2]*x_dummy),col="blue",lwd=3)
+legend("bottomright",bty="n",lty=1,col=c("red","blue"),lwd=3,legend=c("GLM","GLMM"))
+
+
+```
+
+Whether or not you should be working with mixed models depends entirely on your data, so this is something to discuss.
+
+Have fun! And let me know what questions arise. -Tom
